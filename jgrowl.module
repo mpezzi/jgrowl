@@ -1,0 +1,351 @@
+<?php
+// $Id: jgrowl.module,v 1.8.2.2 2010/02/19 09:29:52 ilo Exp $
+
+/**
+ *
+ *  @file
+ *  jGrowl is a jQuery plugin that raises unobtrusive messages within the
+ *  browser, similar to the way that OS X's Growl Framework works.
+ *
+ *  - Override status messages to be displayed on jGrowl.
+ *  - An API to use with Drupal
+ *  - A settings page for easy configuration of all options available in jgrowl.
+ *  - A hook_jgrowl_variable_alter(&$variables) to alter / add variables on the
+ *    settings form and on runtime.
+ *
+ */
+
+define('JGROWL_SYSTEM_MESSAGES', variable_get('jgrowl_system_messages', TRUE));
+define('JGROWL_STICKY_ERRORS', variable_get('jgrowl_sticky_errors', TRUE));
+define('JGROWL_STICKY_STATUSES', variable_get('jgrowl_sticky_statuses', FALSE));
+
+/**
+ * Implementation of hook_perm().
+ */
+function jgrowl_perm() {
+  return array('access jgrowl', 'administer jgrowl');
+}
+
+/**
+ * Implementation of hook_menu().
+ */
+function jgrowl_menu() {
+  $items = array();
+
+  $items['admin/settings/jgrowl'] = array(
+    'title' => 'jGrowl',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('jgrowl_settings_form'),
+    'access arguments' => array('administer jgrowl'),
+  );
+
+  return $items;
+}
+
+/**
+ * Implementation of hook_theme().
+ */
+function jgrowl_theme() {
+  return array(
+    'jgrowl_message' => array(
+      'arguments' => array('message' => NULL, 'options' => array()),
+    ),
+  );
+}
+
+/**
+ * Implementation of hook_theme_registry_alter().
+ * Allows the module to override the core status_messages function with growl
+ * message handler.
+ */
+function jgrowl_theme_registry_alter(&$theme_registry) {
+  if ((user_access('access jgrowl')) && (JGROWL_SYSTEM_MESSAGES == TRUE)) {
+    if (!empty($theme_registry['status_messages']) && JGROWL_SYSTEM_MESSAGES) {
+      $theme_registry['status_messages']['function'] = 'jgrowl_system_messages';
+    }
+  }
+}
+
+/**
+ * Includes all that is needed.
+ *
+ * @return void - uses drupal_dd_js () / drupal_add_css().
+ */
+function jgrowl_include() {
+  static $include;
+
+  if (!$include) {
+    // Handle the various ways jgrowl comes packaged.
+    // There are 3 types:
+    //  1) full (dev version, full source)
+    //  2) compressed
+    //  3) minimized
+    $file = 'jquery.jgrowl';
+    $path = drupal_get_path('module', 'jGrowl');
+    $type = variable_get('jgrowl_file_type', 'compressed');
+    if ($type != 'full') {
+      $file .= '_'. $type;
+    }
+    drupal_add_js($path .'/jgrowl/'. $file .'.js', 'module', 'footer');
+
+    // TODO: make theme-able.    
+    drupal_add_css($path .'/jgrowl/jquery.jgrowl.css');
+    drupal_add_css($path .'/jgrowl.css');
+    
+    $include = TRUE;
+  }
+}
+
+/**
+ *  Themable jQuery jGrowl snippet.
+ *
+ *  @param $message
+ *  The message string that is being displayed in jGrowl.
+ *
+ *  @param $options
+ *  Extra jGrowl options to pass to the JS layer.
+ *
+ *  @return string - JavaScript snippet of a jGrowl instance.
+ */
+function theme_jgrowl_message($message, $options = array()) {
+  $variables = array_merge(jgrowl_variables(), $options);
+  $defaults = jgrowl_default_variables();
+
+  // No need to add items that are already using their default values.
+  foreach ($defaults as $name => $default) {
+    if ($name && $variables[$name] === $default) {
+      unset($variables[$name]);
+    }
+  }
+
+  return '$.jGrowl("'. str_replace("\n", "<br />", addslashes($message)) .'", '. jgrowl_to_js($variables) .'); ';
+}
+
+/**
+ * Module settings form.
+ *
+ * This form is also setup to provide a configurable settings area for other
+ * settings that modules implement via the hook_jgrowl_variable_alter().
+ */
+function jgrowl_settings_form() {
+  $form['jgrowl_file_type'] = array(
+    '#title' => t('File type'),
+    '#description' => t('The file type provided by jGrowl that you wish to use as the included .js for jGrowl.'),
+    '#type' => 'select',
+    '#options' => array('full' => t('Full'), 'compressed' => t('Compressed'), 'minimized' => t('Minimized')),
+    '#default_value' => variable_get('jgrowl_file_type', 'compressed'),
+  );
+
+  $form['jgrowl_system_messages'] = array(
+    '#title' => t('Override system messages'),
+    '#description' => t('Override all system messages that drupal usually prints inline and display them in jGrowl notifications.'),
+    '#type' => 'checkbox',
+    '#default_value' => JGROWL_SYSTEM_MESSAGES,
+  );
+
+  $form['jgrowl_sticky_errors'] = array(
+    '#title' => t('Sticky error messages'),
+    '#description' => t('Automatically sticky error messages even if sticky is not enabled below.'),
+    '#type' => 'checkbox',
+    '#default_value' => JGROWL_STICKY_ERRORS,
+  );
+
+  $form['jgrowl_sticky_statuses'] = array(
+    '#title' => t('Sticky status messages'),
+    '#description' => t('Automatically sticky status messages even if sticky is not enabled below.'),
+    '#type' => 'checkbox',
+    '#default_value' => JGROWL_STICKY_STATUSES,
+  );
+
+  $form['variables'] = array('#title' => t('Configuration'), '#type' => 'fieldset', '#collapsible' => TRUE, '#description' => t('For more information on the variables available and what they do, visit the !site.', array('!site' => l(t('plugin\'s site'), 'http://stanlemon.net/projects/jgrowl.html'))));
+
+  foreach (jgrowl_variables('settings') as $variable => $value) {
+    // Leave room for more custom fields.
+    // TODO: make the settings $op of the hook able to control this?
+    switch ($variable) {
+      case 'position':
+        $type = 'select';
+        $options = array('top-left' => t('Top left'), 'top-right' => t('Top right'), 'bottom-left' => t('Bottom left'), 'bottom-right' => t('Bottom right'), 'center' => t('Center'));
+        $options = array('#options' => $options);
+        break;
+
+      default:
+        $type = 'textfield';
+        $options = array();
+        break;
+    }
+
+    $form['variables']['jgrowl__'. $variable] = array_merge(array(
+      '#title' => $variable,
+      '#type' => $type,
+      '#default_value' => $value,
+    ), $options);
+  }
+
+  return system_settings_form($form);
+}
+
+/**
+ * Handle altering the system messages and displaying them in jgrowl.
+ *
+ * @return void - uses drupal_add_js() to change Drupal's messages to jGrowl.
+ */
+function jgrowl_system_messages() {
+  if (JGROWL_SYSTEM_MESSAGES && !empty($_SESSION['messages'])) {
+    jgrowl_include();
+
+    // Remove messages from the session and display them with growl.
+    $js = '';
+    foreach ($_SESSION['messages'] as $type => $messages) {
+      foreach ($messages as $key => $message) {
+        $options = array('theme' => $type);
+        switch ($type) {
+          case 'status':
+            if (JGROWL_STICKY_STATUSES) {
+              $options['sticky'] = TRUE;
+            }
+            break;
+          case 'error':
+            if (JGROWL_STICKY_ERRORS) {
+              $options['sticky'] = TRUE;
+            }
+            break;
+        }
+        
+        if ( $type != 'devel' ) {
+          $js .= theme('jgrowl_message', $message, $options);
+          unset($_SESSION['messages'][$type][$key]);
+        }
+      }
+      
+      if ( $type != 'devel' ) {
+        unset($_SESSION['messages'][$type]);
+      }
+    }
+    drupal_add_js("$(document).ready(function() { $js });", 'inline', 'footer');
+    return theme_status_messages('devel');
+  }
+}
+
+/**
+ *  Converts a PHP variable into its Javascript equivalent.
+ *
+ *  This is a clone of drupal_to_js() but we removed a few extra security
+ *  measures to avoid JS errors.
+ *
+ *  @param variable
+ *  Whatever variable to convert.
+ *
+ *  @return string - json output.
+ */
+function jgrowl_to_js($var) {
+  // Force a numeric check because of how forgiving PHP can be.
+  if (is_numeric($var)) {
+    $type = 'integer'; }
+  else {
+    $type = gettype($var);
+  }
+
+  switch ($type) {
+    case 'boolean':
+      return $var ? 'true' : 'false'; // Lowercase necessary!
+
+    case 'integer':
+    case 'double':
+      return $var;
+
+    case 'resource':
+    case 'string':
+      return '"'. $var .'"';
+    case 'array':
+      // Arrays in JSON can't be associative. If the array is empty or if it
+      // has sequential whole number keys starting with 0, it's not associative
+      // so we can go ahead and convert it as an array.
+      if (empty ($var) || array_keys($var) === range(0, sizeof($var) - 1)) {
+        $output = array();
+        foreach ($var as $v) {
+          $output[] = jgrowl_to_js($v);
+        }
+        return '[ '. implode(', ', $output) .' ]';
+      }
+      // Otherwise, fall through to convert the array as an object.
+    case 'object':
+      $output = array();
+      foreach ($var as $k => $v) {
+        $output[] = jgrowl_to_js(strval($k)) .': '. jgrowl_to_js($v);
+      }
+      return '{ '. implode(', ', $output) .' }';
+
+    // Handle items already in JS format.
+    case drupal_substr($var, 0, 1) == '{' && drupal_substr($var, (drupal_strlen($var) - 1)) == '}':
+      return $var;
+
+    // Handle custom JS functions.
+    case drupal_substr($var, 0, drupal_strlen('function')) == 'function':
+      return $var;
+
+    default:
+      return 'null';
+  }
+}
+
+/**
+ *  Function to retrieve the jgrowl config variables.
+ *
+ *  @param: $op
+ *  A string of the operation the variables are currently on.
+ *  - load - on load time.
+ *  - settings - when the settings form is presented.
+ *
+ *  @return: struct of variables.
+ */
+function jgrowl_variables($op = 'load') {
+  $variables = array();
+
+  $defaults = jgrowl_default_variables();
+
+  // TODO: i added the extra __ for safety for now. is this how i want to handle
+  // having them 'separate' as specific variables to pass to JS?
+  foreach ($defaults as $name => $value) {
+    $variables[$name] = variable_get('jgrowl__'. $name, $value);
+  }
+
+  // A hook to alter or add to the variables array.
+  foreach (module_implements('jgrowl_variable_alter') as $module) {
+    $function = $module .'_jgrowl_variable_alter';
+    $function($op, $variables);
+  }
+
+  return $variables;
+}
+
+/**
+ *  Function to store all the default variables available in a jgrowl instance.
+ *  TODO: redo this to be more dynamic instead of hardcoded in?
+ *
+ *  @return struct of default variables.
+ */
+function jgrowl_default_variables() {
+  return array(
+    'header' => '',
+    'sticky' => 'false',
+    'glue' => 'after',
+    'position' => 'top-right',
+    'theme' => 'default',
+    'corners' => '10px',
+    'check' => '1000',
+    'life' => '3000',
+    'speed' => 'normal',
+    'easing' => 'swing',
+    'closer' => 'true',
+    'closerTemplate' => '<div>hide all</div>',
+    'log' => 'function(e,m,o) {}',
+    'beforeOpen' => 'function(e,m,o) {}',
+    'open' => 'function(e,m,o) {}',
+    'beforeClose' => 'function(e,m,o) {}',
+    'close' => 'function(e,m,o) {}',
+    'animateOpen' => '{ opacity: "show" }',
+    'animateClose' => '{ opacity: "hide" }',
+  );
+}
+

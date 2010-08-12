@@ -1,0 +1,6 @@
+/* $Id: jgrowl.css,v 1.1 2008/09/21 04:34:07 stevemckenzie Exp $ */
+
+/** Custom styles for Drupal messages. **/
+#jGrowl .status { background: #F1F8EB; border: 1px solid #7AC142; color: #55872E; font-weight: bold; }
+#jGrowl .error { background: #FFCCCC; border: 1px solid #DD7777; color: #8A1F11; font-weight: bold; }
+
