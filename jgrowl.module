@@ -118,7 +118,7 @@ function theme_jgrowl_message($message, $options = array()) {
     }
   }
 
-  return '$.jGrowl("'. str_replace("\n", "<br />", addslashes($message)) .'", '. jgrowl_to_js($variables) .'); ';
+  return '$.jGrowl("'. str_replace("\n", "", addslashes($message)) .'", '. jgrowl_to_js($variables) .'); ';
 }
 
 /**
@@ -191,42 +191,36 @@ function jgrowl_settings_form() {
  * @return void - uses drupal_add_js() to change Drupal's messages to jGrowl.
  */
 function jgrowl_system_messages() {
-  if (JGROWL_SYSTEM_MESSAGES && !empty($_SESSION['messages'])) {
+  if ( JGROWL_SYSTEM_MESSAGES && !empty($_SESSION['messages']) ) {
     jgrowl_include();
-
-    // Remove messages from the session and display them with growl.
+    
     $js = '';
-    foreach ($_SESSION['messages'] as $type => $messages) {
-      foreach ($messages as $key => $message) {
-        $options = array('theme' => $type);
-        switch ($type) {
-          case 'status':
-            if (JGROWL_STICKY_STATUSES) {
-              $options['sticky'] = TRUE;
-            }
-            break;
-          case 'error':
-            if (JGROWL_STICKY_ERRORS) {
-              $options['sticky'] = TRUE;
-            }
-            break;
-        }
-        
-        if ( $type != 'devel' ) {
-          $js .= theme('jgrowl_message', $message, $options);
-          unset($_SESSION['messages'][$type][$key]);
-        }
-      }
+    foreach ( $_SESSION['messages'] as $type => $messages ) {
+      $options = array('theme' => $type, 'sticky' => jgrowl_type_is_sticky($type));
       
-      if ( $type != 'devel' ) {
+      if ( $type != 'debug' ) {
+        $js .= theme('jgrowl_message', theme('item_list', $messages), $options);
         unset($_SESSION['messages'][$type]);
       }
     }
+    
     drupal_add_js("$(document).ready(function() { $js });", 'inline', 'footer');
-    return theme_status_messages('devel');
+    
+    if ( isset($_SESSION['messages']['debug']) ) {
+      return theme_status_messages('debug');
+    }
   }
 }
 
+function jgrowl_type_is_sticky($type) {
+  switch ( $type ) {
+    case 'status':
+      return JGROWL_STICKY_STATUSES;
+    case 'error':
+      return JGROWL_STICKY_ERRORS;
+  }
+}
+ 
 /**
  *  Converts a PHP variable into its Javascript equivalent.
  *
